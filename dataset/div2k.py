@@ -4,14 +4,14 @@ DIV2K Dataset Class
 """
 
 import os
-import glob
-
 import numpy as np
-from PIL import Image
 
+from glob import glob
+from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 
+from utils.image import load_image
 
 
 class DIV2K(Dataset):
@@ -90,108 +90,53 @@ class DIV2K(Dataset):
         return len(self.lr_images)
 
 
-class Div2kRandom(Dataset):
-    def __init__(self, path, num_of_images, trans=transforms.ToTensor(), seed=None):
-        super(Div2kRandom, self).__init__()
-        assert os.path.exists(path)
-
+class DIV2KMultiScales(Dataset):
+    def __init__(self, path: str, upscale: list, trans=transforms.ToTensor()):
+        super(DIV2KMultiScales, self).__init__()
+        assert os.path.exists(path), f"{path} not EXISTS!"
         self.path = path
-        self.num_of_images = num_of_images
+        self.upscale = upscale
         self.trans = trans
-        self.seed = seed
+        self.lr_images, self.hr_images = self.scan()
 
-        self.lr_paths, self.hr_paths = self.scanf_files()
-
-    def scanf_files(self):
-        hr_all_paths = sorted(glob.glob(os.path.join(self.path, 'DIV2K_train_HR_decode', '*.npy')))
-        lr_all_paths_2 = sorted(glob.glob(os.path.join(self.path, 'DIV2K_train_LR_bicubic_decode', f'X2', '*.npy')))
-        lr_all_paths_3 = sorted(glob.glob(os.path.join(self.path, 'DIV2K_train_LR_bicubic_decode', f'X3', '*.npy')))
-        lr_all_paths_4 = sorted(glob.glob(os.path.join(self.path, 'DIV2K_train_LR_bicubic_decode', f'X4', '*.npy')))
-
-        index = [d for d in range(len(hr_all_paths))]
-        if self.seed is not None:
-            np.random.seed(self.seed)
-
-        # factor 1
-        # np.random.shuffle(index)
-        # hr_paths = [hr_all_paths[d] for d in index[:self.num_of_images]]
-        # lr_paths = [hr_all_paths[d] for d in index[:self.num_of_images]]
-
-        # factor 2
-        np.random.shuffle(index)
-        hr_paths = [hr_all_paths[d] for d in index[:self.num_of_images]]
-        lr_paths = [lr_all_paths_2[d] for d in index[:self.num_of_images]]
-
-        # factor 3
-        np.random.shuffle(index)
-        hr_paths += [hr_all_paths[d] for d in index[:self.num_of_images]]
-        lr_paths += [lr_all_paths_3[d] for d in index[:self.num_of_images]]
-
-        # factor 4
-        np.random.shuffle(index)
-        hr_paths += [hr_all_paths[d] for d in index[:self.num_of_images]]
-        lr_paths += [lr_all_paths_4[d] for d in index[:self.num_of_images]]
-
-        # print(len(lr_paths), len(hr_paths))
-
-        return lr_paths, hr_paths
-
-    def __getitem__(self, item):
-        lr = np.load(self.lr_paths[item])
-        hr = np.load(self.hr_paths[item])
-        lr_tensor = self.trans(lr)
-        hr_tensor = self.trans(hr)
-        return lr_tensor, hr_tensor
-
-    def __len__(self):
-        return len(self.lr_paths)
-
-
-class Div2kBenchmark(Dataset):
-    def __init__(self, path, factor, trans=transforms.ToTensor()):
-        super(Div2kBenchmark, self).__init__()
-        assert os.path.exists(path)
-        assert factor in [2, 3, 4, 6, 8]
-        self.path = path
-        self.factor = factor
-        self.trans = trans
-        self.lr_paths, self.hr_paths = self.scan_files()
-
-
-    def scan_files(self):
-        hr_paths = sorted(glob.glob(
-            os.path.join(self.path, 'DIV2K_valid_HR', '*.png')))
-        lr_paths = sorted(glob.glob(
-            os.path.join(self.path, 'DIV2K_valid_LR_bicubic', f'X{str(self.factor)}', '*.png')))
-        return lr_paths, hr_paths
+    def scan(self):
+        hr_images = []
+        lr_images = []
+        for scale in self.upscale:
+            if scale == 1:
+                lr_images += sorted(glob(os.path.join(self.path, "DIV2K_train_HR_decode", "*")))
+            else:
+                lr_images += sorted(
+                    glob(os.path.join(self.path, "DIV2K_train_LR_bicubic_decode", f"X{str(scale)}", "*"))
+                )
+            hr_images += sorted(glob(os.path.join(self.path, "DIV2K_train_HR_decode", "*")))
+        assert len(lr_images) == len(hr_images)
+        return lr_images, hr_images
 
     def __getitem__(self, idx):
-        lr_img = Image.open(self.lr_paths[idx])
-        hr_img = Image.open(self.hr_paths[idx])
-        lr_tensor = self.trans(lr_img)
-        hr_tensor = self.trans(hr_img)
+        lr_image = load_image(self.lr_images[idx])
+        hr_image = load_image(self.hr_images[idx])
+
+        lr_tensor = self.trans(lr_image)
+        hr_tensor = self.trans(hr_image)
+
         return lr_tensor, hr_tensor
 
     def __len__(self):
-        return len(self.lr_paths)
+        return len(self.lr_images)
 
 
 if __name__ == '__main__':
-    import matplotlib.pyplot as plt
+    from matplotlib import pyplot as plt
     from torch.utils.data import DataLoader
-
-    ds = DIV2K(path=r'../data/DIV2K', factor=3)
-    dl = DataLoader(ds, batch_size=18, shuffle=True)
-
+    ds = DIV2KMultiScales(r"/data2/guesthome/wenbop/linzijie/workspace/dataset/DIV2K", upscale=[2, 3, 4])
+    dl = DataLoader(ds, batch_size=8, shuffle=True)
     lrs, hrs = next(iter(dl))
     print(lrs.shape, hrs.shape)
     lr = lrs[0].permute(1, 2, 0).numpy()
     hr = hrs[0].permute(1, 2, 0).numpy()
-
-    plt.figure(figsize=(12, 8))
     plt.subplot(1, 2, 1)
     plt.imshow(lr)
     plt.subplot(1, 2, 2)
     plt.imshow(hr)
-    plt.savefig('test.png')
-    # plt.show()
+    plt.show()
